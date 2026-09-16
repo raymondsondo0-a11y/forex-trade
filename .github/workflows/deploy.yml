@@ -35,7 +35,7 @@ jobs:
           password: ${{ secrets.INFINITYFREE_FTP_PASSWORD }}
           protocol: ftp
           port: 21
-          server-dir: /htdocs/
+          server-dir: /primonizer.kesug.com/htdocs/
           dangerous-clean-slate: false
           exclude: |
             **/.git*/**
