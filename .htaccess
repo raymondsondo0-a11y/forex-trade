@@ -1,0 +1,5 @@
+Options -Indexes
+
+<Files "runtime_config.php">
+    Require all denied
+</Files>
