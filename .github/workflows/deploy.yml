@@ -12,6 +12,21 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Create secure runtime configuration
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          if [ -z "$OPENAI_API_KEY" ]; then
+            echo "OPENAI_API_KEY is missing"
+            exit 1
+          fi
+          python3 - <<'PY'
+          import json, os
+          key = os.environ["OPENAI_API_KEY"]
+          with open("runtime_config.php", "w", encoding="utf-8") as f:
+              f.write("<?php\nreturn " + json.dumps(key) + ";\n")
+          PY
+
       - name: Deploy to InfinityFree
         uses: SamKirkland/FTP-Deploy-Action@v4.3.6
         with:
@@ -26,3 +41,7 @@ jobs:
             **/.git*/**
             **/.github/**
             README.md
+
+      - name: Remove runtime configuration from runner
+        if: always()
+        run: rm -f runtime_config.php
