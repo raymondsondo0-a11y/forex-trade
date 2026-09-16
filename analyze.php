@@ -1,95 +1,54 @@
 <?php
 header('Content-Type: application/json; charset=utf-8');
 header('Cache-Control: no-store');
-function fail_json(string $message, int $code = 400): never { http_response_code($code); echo json_encode(['error'=>$message], JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE); exit; }
-if ($_SERVER['REQUEST_METHOD'] !== 'POST') fail_json('POST required.',405);
-$symbol=trim((string)($_POST['symbol']??'UNKNOWN')); $timeframe=trim((string)($_POST['timeframe']??'UNKNOWN'));
-$allowedTf=['M1','M5','M15','M30','H1','H4','D1','UNKNOWN']; if(!in_array($timeframe,$allowedTf,true))$timeframe='UNKNOWN';
-if(!isset($_FILES['chart'])||!is_array($_FILES['chart']))fail_json('Please upload a candlestick chart screenshot.');
-$file=$_FILES['chart']; if(($file['error']??UPLOAD_ERR_NO_FILE)!==UPLOAD_ERR_OK)fail_json('The image upload failed. Please try again.');
-if(($file['size']??0)>12*1024*1024)fail_json('Image is too large. Maximum size is 12 MB.');
-$tmp=$file['tmp_name']; $mime=(new finfo(FILEINFO_MIME_TYPE))->file($tmp); $allowed=['image/jpeg','image/png','image/webp']; if(!in_array($mime,$allowed,true))fail_json('Only JPG, PNG and WEBP chart images are supported.');
-$bytes=file_get_contents($tmp); if($bytes===false)fail_json('Could not read the uploaded image.',500); $dataUrl='data:'.$mime.';base64,'.base64_encode($bytes);
-$apiKey=getenv('OPENAI_API_KEY'); if(!$apiKey&&is_file(__DIR__.'/runtime_config.php')){ $v=require __DIR__.'/runtime_config.php'; if(is_string($v))$apiKey=trim($v); }
-if(!$apiKey)fail_json('AI engine is not connected. Server runtime configuration is missing.',503);
+function fail_json(string $m,int $c=400):never{http_response_code($c);echo json_encode(['error'=>$m],JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES);exit;}
+if($_SERVER['REQUEST_METHOD']!=='POST')fail_json('POST required.',405);
+$symbol=trim((string)($_POST['symbol']??'UNKNOWN'));
+$allowed=['M1','M5','M15','M30','H1','H4','D1','UNKNOWN'];
+$files=$_FILES['charts']??null;
+if(!$files||!isset($files['tmp_name'])||!is_array($files['tmp_name']))fail_json('Upload up to 4 chart screenshots.');
+$count=count($files['tmp_name']);if($count<1||$count>4)fail_json('Please upload between 1 and 4 screenshots.');
+$apiKey=getenv('OPENAI_API_KEY');if(!$apiKey&&is_file(__DIR__.'/runtime_config.php')){$v=require __DIR__.'/runtime_config.php';if(is_string($v))$apiKey=trim($v);}if(!$apiKey)fail_json('AI engine is not connected.',503);
+$payloadParts=[];$meta=[];
+for($i=0;$i<$count;$i++){
+ if(($files['error'][$i]??UPLOAD_ERR_NO_FILE)!==UPLOAD_ERR_OK)fail_json('One of the uploaded images failed.');
+ if(($files['size'][$i]??0)>12*1024*1024)fail_json('Each image must be 12 MB or smaller.');
+ $tmp=$files['tmp_name'][$i];$mime=(new finfo(FILEINFO_MIME_TYPE))->file($tmp);if(!in_array($mime,['image/jpeg','image/png','image/webp'],true))fail_json('Only JPG, PNG and WEBP are supported.');
+ $bytes=file_get_contents($tmp);if($bytes===false)fail_json('Could not read one uploaded image.',500);
+ $tf=trim((string)($_POST['timeframes'][$i]??'UNKNOWN'));if(!in_array($tf,$allowed,true))$tf='UNKNOWN';
+ $meta[]=['index'=>$i+1,'timeframe'=>$tf];
+ $payloadParts[]=['type'=>'input_text','text'=>'CHART '.$i.' — TIMEFRAME '.$tf.'. Analyze this chart independently, then relate it to the other charts.'];
+ $payloadParts[]=['type'=>'input_image','image_url'=>'data:'.$mime.';base64,'.base64_encode($bytes),'detail'=>'high'];
+}
 $prompt=<<<PROMPT
-You are Primonizer Forex AI, a visual trading tutor and rigorous chart-analysis engine.
+You are PRIMONIZER FOREX AI, a multi-timeframe visual trading tutor.
 
-Analyze the ENTIRE VISIBLE CHART AREA, not only the newest candles. Reconstruct the largest readable historical context from left to right, then focus on the current price area. The goal is to teach the trader what the market is doing and show the reasoning directly on the chart.
+There are up to four screenshots of the SAME market, normally different timeframes. Analyze EACH screenshot independently across its ENTIRE visible chart, left-to-right, not just the newest candles. Then combine them into one top-down market story.
 
-Create a visual chart map. Identify, when actually visible: major/minor swing highs and lows; HH, HL, LH, LL; displacement; BOS and CHoCH candidates; equal highs/lows and liquidity pools; liquidity sweeps; potential bullish/bearish order-block zones; three-candle FVG/imbalance candidates; support/resistance; broad dealing range; premium/discount when reliable; and current price.
+For every chart identify only visible evidence: HH/HL/LH/LL, BOS/CHoCH, displacement, liquidity/equal highs-lows/sweeps, bullish and bearish order-block CANDIDATES, FVG/imbalances, support/resistance, premium/discount, current price and the best visible entry/watch area.
 
-IMPORTANT COORDINATES:
-- Estimate annotation positions as normalized coordinates from 0 to 1 over the ORIGINAL IMAGE: x=0 is left edge, x=1 right edge; y=0 is top, y=1 bottom.
-- For a zone, provide x1,y1,x2,y2.
-- For a point, provide x,y.
-- Coordinates must refer to visible chart locations, not page/UI locations.
-- Only create annotations when the feature is reasonably visible. Do not fabricate coordinates.
+ORDER BLOCK QUALITY IS IMPORTANT. Do NOT call every last opposite candle an order block. A valid OB CANDIDATE should have contextual evidence such as a meaningful swing/location, displacement away from it and preferably a structural break. Explain WHY it qualifies and WHY another nearby candle does not. Mark its exact visible area with normalized coordinates.
 
-DIRECTIONAL CONCLUSION:
-Give a CURRENT directional bias based only on visible evidence: BULLISH, BEARISH, or NEUTRAL.
-Also give a short next-move scenario: UP, DOWN, or WAIT.
-This is a scenario, NOT certainty and NOT a guaranteed prediction. Explain the evidence and the exact invalidation condition.
-If the evidence is mixed, use NEUTRAL/WAIT rather than forcing a direction.
+ENTRY: For each timeframe, give an entry/watch zone, confirmation trigger, invalidation and target area when these can be read from the screenshot. Never invent exact prices if the axis is unreadable. Prefer an entry ZONE rather than a fake exact number.
 
-Return ONLY valid JSON. No markdown fences. Use exactly this structure:
+MULTI-TIMEFRAME CONCLUSION: Use the higher timeframe for broad structure/context and lower timeframe for refinement/trigger. Do not force agreement. If timeframes conflict, explicitly say so and explain what must happen before a lower-timeframe entry aligns with higher-timeframe structure.
+
+COORDINATES: x/y are normalized 0..1 over the ORIGINAL image. x=0 left, x=1 right, y=0 top, y=1 bottom. Zones use x1,y1,x2,y2. Points use x,y. Do not fabricate coordinates.
+
+Return ONLY valid JSON, no markdown fences, in this shape:
 {
-  "direction": "BULLISH|BEARISH|NEUTRAL",
-  "next_move": "UP|DOWN|WAIT",
-  "confidence": 0,
-  "headline": "short human-readable conclusion",
-  "current_state": "2-3 short sentences",
-  "market_story": ["Step 1...","Step 2...","Step 3...","Step 4..."],
-  "bullish_case": "short scenario and confirmation condition",
-  "bearish_case": "short scenario and confirmation condition",
-  "invalidation": "single clear invalidation condition for the primary direction",
-  "watch_zone": "short description of the most important area to watch",
-  "annotations": [
-    {"type":"HH|HL|LH|LL|BOS|CHoCH|LIQUIDITY|SWEEP|OB_BULL|OB_BEAR|FVG|SUPPORT|RESISTANCE|PREMIUM|DISCOUNT|CURRENT","label":"short label","note":"very short reason","x":0.0,"y":0.0,"x2":null,"y2":null},
-    {"type":"...","label":"...","note":"...","x":0.0,"y":0.0,"x2":null,"y2":null}
-  ],
-  "path": [
-    {"direction":"UP|DOWN","x":0.0,"y":0.0,"label":"START|TARGET|INVALIDATION"}
-  ],
-  "key_levels": ["short level description","short level description"],
-  "tutorial": [
-    {"title":"Structure","text":"short explanation"},
-    {"title":"Liquidity","text":"short explanation"},
-    {"title":"Trigger","text":"short explanation"},
-    {"title":"What to watch","text":"short explanation"}
-  ],
-  "risk_note": "short risk note"
+ "overall":{"direction":"BULLISH|BEARISH|NEUTRAL","next_move":"UP|DOWN|WAIT","confidence":0,"headline":"short conclusion","market_story":["...","...","...","..."],"entry_plan":"short multi-timeframe entry plan","invalidation":"short primary invalidation","risk_note":"short risk note"},
+ "charts":[{"index":1,"timeframe":"H4","direction":"BULLISH|BEARISH|NEUTRAL","next_move":"UP|DOWN|WAIT","confidence":0,"headline":"short","current_state":"short","valid_order_block":{"status":"BULLISH|BEARISH|NONE|UNCLEAR","label":"VALID OB CANDIDATE","why":"short evidence","why_not_others":"short explanation","x":0,"y":0,"x2":0,"y2":0},"entry":{"zone":"short visible zone","confirmation":"short trigger","invalidation":"short condition","target":"short target"},"annotations":[{"type":"HH|HL|LH|LL|BOS|CHoCH|LIQUIDITY|SWEEP|OB_BULL|OB_BEAR|FVG|SUPPORT|RESISTANCE|PREMIUM|DISCOUNT|CURRENT|ENTRY|INVALIDATION|TARGET","label":"short","note":"short","x":0,"y":0,"x2":null,"y2":null}],"path":[{"direction":"UP|DOWN","x":0,"y":0,"label":"START|ENTRY|TARGET|INVALIDATION"}],"tutorial":[{"title":"Structure","text":"short"},{"title":"Liquidity","text":"short"},{"title":"Order block","text":"short"},{"title":"Entry","text":"short"}] }],
+ "confluence":["short cross-timeframe fact","short cross-timeframe fact"],
+ "final_diagram":{"direction":"UP|DOWN|WAIT","steps":[{"label":"CURRENT","x":0,"y":0},{"label":"ENTRY","x":0,"y":0},{"label":"TARGET","x":0,"y":0}],"why":"short explanation"}
 }
 
-Rules:
-- confidence is an integer 0-100 representing confidence in the evidence visible in this screenshot, NOT probability of profit.
-- Keep every text field concise and easy to scan.
-- Never invent exact prices if the price axis is unreadable.
-- Never invent candles, levels, order flow or data not visible.
-- Treat order blocks, liquidity and SMC concepts as hypotheses inferred from price action.
-- Give structural context before calling BOS/CHoCH.
-- If image quality prevents reliable detection, say so and use fewer annotations.
-- Do not claim certainty or guaranteed profit.
-- The diagram path should show the primary scenario from CURRENT toward TARGET and, if useful, an INVALIDATION branch.
-- Do not force a bullish or bearish answer when evidence is mixed.
-
-Selected symbol: $symbol
-Selected timeframe: $timeframe
+Evidence labels: VISIBLE means directly readable; CANDIDATE means a reasonable chart interpretation; SCENARIO means conditional future path; INVALIDATED means its condition has occurred. Never claim guaranteed prediction or profit. Confidence is confidence in visible evidence, not probability of profit.
 PROMPT;
-$payload=['model'=>'gpt-5.6-luna','input'=>[['role'=>'user','content'=>[['type'=>'input_text','text'=>$prompt],['type'=>'input_image','image_url'=>$dataUrl,'detail'=>'high']]]]];
-$ch=curl_init('https://api.openai.com/v1/responses'); curl_setopt_array($ch,[CURLOPT_POST=>true,CURLOPT_RETURNTRANSFER=>true,CURLOPT_HTTPHEADER=>['Content-Type: application/json','Authorization: Bearer '.$apiKey],CURLOPT_POSTFIELDS=>json_encode($payload),CURLOPT_TIMEOUT=>120]);
-$response=curl_exec($ch); $curlError=curl_error($ch); $status=(int)curl_getinfo($ch,CURLINFO_HTTP_CODE); curl_close($ch);
-if($response===false||$curlError)fail_json('AI connection failed. Please try again.',502); $data=json_decode($response,true); if(!is_array($data))fail_json('AI returned an invalid response.',502);
-if($status>=400)fail_json($data['error']['message']??'AI provider rejected the request.',502);
-$text=$data['output_text']??''; if(!$text&&isset($data['output'])&&is_array($data['output']))foreach($data['output'] as $item)foreach(($item['content']??[]) as $part)if(isset($part['text']))$text.=$part['text'];
-if(!$text)fail_json('The AI returned no analysis.',502);
-$text=trim($text); if(str_starts_with($text,'```'))$text=preg_replace('/^```(?:json)?\s*|\s*```$/','',$text);
-$analysis=json_decode($text,true); if(!is_array($analysis))fail_json('The AI returned an unreadable visual analysis. Please try a clearer chart screenshot.',502);
-$analysis['direction']=in_array(($analysis['direction']??''),['BULLISH','BEARISH','NEUTRAL'],true)?$analysis['direction']:'NEUTRAL';
-$analysis['next_move']=in_array(($analysis['next_move']??''),['UP','DOWN','WAIT'],true)?$analysis['next_move']:'WAIT';
-$analysis['confidence']=max(0,min(100,(int)($analysis['confidence']??0)));
-$analysis['annotations']=is_array($analysis['annotations']??null)?$analysis['annotations']:[];
-$analysis['path']=is_array($analysis['path']??null)?$analysis['path']:[];
-$analysis['market_story']=is_array($analysis['market_story']??null)?$analysis['market_story']:[];
-$analysis['tutorial']=is_array($analysis['tutorial']??null)?$analysis['tutorial']:[];
-echo json_encode(['ok'=>true,'symbol'=>$symbol,'timeframe'=>$timeframe,'engine'=>'Primonizer Forex AI — Visual Full Chart Tutor','analysis'=>$analysis],JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE);
+$content=[['type'=>'input_text','text'=>$prompt],...$payloadParts];
+$payload=['model'=>'gpt-5.6-luna','input'=>[['role'=>'user','content'=>$content]]];
+$ch=curl_init('https://api.openai.com/v1/responses');curl_setopt_array($ch,[CURLOPT_POST=>true,CURLOPT_RETURNTRANSFER=>true,CURLOPT_HTTPHEADER=>['Content-Type: application/json','Authorization: Bearer '.$apiKey],CURLOPT_POSTFIELDS=>json_encode($payload),CURLOPT_TIMEOUT=>180]);$response=curl_exec($ch);$err=curl_error($ch);$status=(int)curl_getinfo($ch,CURLINFO_HTTP_CODE);curl_close($ch);
+if($response===false||$err)fail_json('AI connection failed. Please try again.',502);$data=json_decode($response,true);if(!is_array($data))fail_json('AI returned invalid data.',502);if($status>=400)fail_json($data['error']['message']??'AI provider rejected the request.',502);
+$text=$data['output_text']??'';if(!$text&&isset($data['output']))foreach($data['output'] as $item)foreach(($item['content']??[]) as $part)if(isset($part['text']))$text.=$part['text'];if(!$text)fail_json('AI returned no analysis.',502);$text=trim($text);if(str_starts_with($text,'```'))$text=preg_replace('/^```(?:json)?\s*|\s*```$/','',$text);$analysis=json_decode($text,true);if(!is_array($analysis))fail_json('AI returned unreadable analysis. Try clearer screenshots.',502);
+$analysis['overall']=$analysis['overall']??[];$analysis['charts']=is_array($analysis['charts']??null)?$analysis['charts']:[];$analysis['confluence']=is_array($analysis['confluence']??null)?$analysis['confluence']:[];$analysis['final_diagram']=$analysis['final_diagram']??[];
+echo json_encode(['ok'=>true,'symbol'=>$symbol,'count'=>$count,'meta'=>$meta,'engine'=>'Primonizer Forex AI — Multi-Timeframe Visual Tutor','analysis'=>$analysis],JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES);
