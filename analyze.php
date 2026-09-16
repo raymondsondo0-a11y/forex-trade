@@ -13,37 +13,68 @@ $bytes=file_get_contents($tmp); if($bytes===false)fail_json('Could not read the 
 $apiKey=getenv('OPENAI_API_KEY'); if(!$apiKey&&is_file(__DIR__.'/runtime_config.php')){ $v=require __DIR__.'/runtime_config.php'; if(is_string($v))$apiKey=trim($v); }
 if(!$apiKey)fail_json('AI engine is not connected. Server runtime configuration is missing.',503);
 $prompt=<<<PROMPT
-You are Primonizer Forex AI, a rigorous chart-analysis engine.
+You are Primonizer Forex AI, a visual trading tutor and rigorous chart-analysis engine.
 
-Analyze the ENTIRE VISIBLE CHART AREA. Do not focus only on the newest candles. Preserve the largest readable historical context in the screenshot, then give extra weight to the most recent confirmed structure when describing the current state.
+Analyze the ENTIRE VISIBLE CHART AREA, not only the newest candles. Reconstruct the largest readable historical context from left to right, then focus on the current price area. The goal is to teach the trader what the market is doing and show the reasoning directly on the chart.
 
-First create an internal structured chart map from the image. Look across the full visible chart for: major/minor swing highs and lows; HH, HL, LH, LL sequences; displacement; BOS and CHoCH candidates; repeated/equal highs and lows; liquidity pools and sweeps; potential bullish/bearish order-block zones; three-candle FVG/imbalance candidates; support/resistance; the broad visible dealing range; premium/discount location where reliable; and current price location relative to broader structure.
+Create a visual chart map. Identify, when actually visible: major/minor swing highs and lows; HH, HL, LH, LL; displacement; BOS and CHoCH candidates; equal highs/lows and liquidity pools; liquidity sweeps; potential bullish/bearish order-block zones; three-candle FVG/imbalance candidates; support/resistance; broad dealing range; premium/discount when reliable; and current price.
 
-Accuracy rules:
-- Never intentionally crop the chart to only the recent area.
-- Separate visible evidence from interpretation.
-- Never invent exact prices if the axis is unreadable.
-- Never invent candles, levels, order flow or data that is not visible.
+IMPORTANT COORDINATES:
+- Estimate annotation positions as normalized coordinates from 0 to 1 over the ORIGINAL IMAGE: x=0 is left edge, x=1 right edge; y=0 is top, y=1 bottom.
+- For a zone, provide x1,y1,x2,y2.
+- For a point, provide x,y.
+- Coordinates must refer to visible chart locations, not page/UI locations.
+- Only create annotations when the feature is reasonably visible. Do not fabricate coordinates.
+
+DIRECTIONAL CONCLUSION:
+Give a CURRENT directional bias based only on visible evidence: BULLISH, BEARISH, or NEUTRAL.
+Also give a short next-move scenario: UP, DOWN, or WAIT.
+This is a scenario, NOT certainty and NOT a guaranteed prediction. Explain the evidence and the exact invalidation condition.
+If the evidence is mixed, use NEUTRAL/WAIT rather than forcing a direction.
+
+Return ONLY valid JSON. No markdown fences. Use exactly this structure:
+{
+  "direction": "BULLISH|BEARISH|NEUTRAL",
+  "next_move": "UP|DOWN|WAIT",
+  "confidence": 0,
+  "headline": "short human-readable conclusion",
+  "current_state": "2-3 short sentences",
+  "market_story": ["Step 1...","Step 2...","Step 3...","Step 4..."],
+  "bullish_case": "short scenario and confirmation condition",
+  "bearish_case": "short scenario and confirmation condition",
+  "invalidation": "single clear invalidation condition for the primary direction",
+  "watch_zone": "short description of the most important area to watch",
+  "annotations": [
+    {"type":"HH|HL|LH|LL|BOS|CHoCH|LIQUIDITY|SWEEP|OB_BULL|OB_BEAR|FVG|SUPPORT|RESISTANCE|PREMIUM|DISCOUNT|CURRENT","label":"short label","note":"very short reason","x":0.0,"y":0.0,"x2":null,"y2":null},
+    {"type":"...","label":"...","note":"...","x":0.0,"y":0.0,"x2":null,"y2":null}
+  ],
+  "path": [
+    {"direction":"UP|DOWN","x":0.0,"y":0.0,"label":"START|TARGET|INVALIDATION"}
+  ],
+  "key_levels": ["short level description","short level description"],
+  "tutorial": [
+    {"title":"Structure","text":"short explanation"},
+    {"title":"Liquidity","text":"short explanation"},
+    {"title":"Trigger","text":"short explanation"},
+    {"title":"What to watch","text":"short explanation"}
+  ],
+  "risk_note": "short risk note"
+}
+
+Rules:
+- confidence is an integer 0-100 representing confidence in the evidence visible in this screenshot, NOT probability of profit.
+- Keep every text field concise and easy to scan.
+- Never invent exact prices if the price axis is unreadable.
+- Never invent candles, levels, order flow or data not visible.
 - Treat order blocks, liquidity and SMC concepts as hypotheses inferred from price action.
-- Give structural context before calling a BOS or CHoCH.
-- For every important zone explain the evidence and invalidation.
-- If image quality prevents reliable detection, say so instead of guessing.
+- Give structural context before calling BOS/CHoCH.
+- If image quality prevents reliable detection, say so and use fewer annotations.
+- Do not claim certainty or guaranteed profit.
+- The diagram path should show the primary scenario from CURRENT toward TARGET and, if useful, an INVALIDATION branch.
+- Do not force a bullish or bearish answer when evidence is mixed.
 
-Write a readable report with:
-1. EXECUTIVE CHART READ
-2. FULL-VIEW MARKET STRUCTURE
-3. LIQUIDITY MAP
-4. ORDER-BLOCK MAP
-5. FVG / IMBALANCE MAP
-6. SUPPORT / RESISTANCE
-7. PREMIUM / DISCOUNT
-8. MULTI-FACTOR CONFLUENCE
-9. BULLISH SCENARIO AND INVALIDATION
-10. BEARISH SCENARIO AND INVALIDATION
-11. WHAT THE CHART DOES NOT PROVE
-12. RISK NOTES
-
-Do not claim certainty or guaranteed profit. Use candidate, possible, visible evidence, confirmation and invalidation. Explain what extra timeframe/data would improve the analysis. Selected symbol: $symbol. Selected timeframe: $timeframe.
+Selected symbol: $symbol
+Selected timeframe: $timeframe
 PROMPT;
 $payload=['model'=>'gpt-5.6-luna','input'=>[['role'=>'user','content'=>[['type'=>'input_text','text'=>$prompt],['type'=>'input_image','image_url'=>$dataUrl,'detail'=>'high']]]]];
 $ch=curl_init('https://api.openai.com/v1/responses'); curl_setopt_array($ch,[CURLOPT_POST=>true,CURLOPT_RETURNTRANSFER=>true,CURLOPT_HTTPHEADER=>['Content-Type: application/json','Authorization: Bearer '.$apiKey],CURLOPT_POSTFIELDS=>json_encode($payload),CURLOPT_TIMEOUT=>120]);
@@ -52,4 +83,13 @@ if($response===false||$curlError)fail_json('AI connection failed. Please try aga
 if($status>=400)fail_json($data['error']['message']??'AI provider rejected the request.',502);
 $text=$data['output_text']??''; if(!$text&&isset($data['output'])&&is_array($data['output']))foreach($data['output'] as $item)foreach(($item['content']??[]) as $part)if(isset($part['text']))$text.=$part['text'];
 if(!$text)fail_json('The AI returned no analysis.',502);
-echo json_encode(['ok'=>true,'symbol'=>$symbol,'timeframe'=>$timeframe,'engine'=>'Primonizer Forex AI — Full Chart Analysis','analysis'=>trim($text)],JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE);
+$text=trim($text); if(str_starts_with($text,'```'))$text=preg_replace('/^```(?:json)?\s*|\s*```$/','',$text);
+$analysis=json_decode($text,true); if(!is_array($analysis))fail_json('The AI returned an unreadable visual analysis. Please try a clearer chart screenshot.',502);
+$analysis['direction']=in_array(($analysis['direction']??''),['BULLISH','BEARISH','NEUTRAL'],true)?$analysis['direction']:'NEUTRAL';
+$analysis['next_move']=in_array(($analysis['next_move']??''),['UP','DOWN','WAIT'],true)?$analysis['next_move']:'WAIT';
+$analysis['confidence']=max(0,min(100,(int)($analysis['confidence']??0)));
+$analysis['annotations']=is_array($analysis['annotations']??null)?$analysis['annotations']:[];
+$analysis['path']=is_array($analysis['path']??null)?$analysis['path']:[];
+$analysis['market_story']=is_array($analysis['market_story']??null)?$analysis['market_story']:[];
+$analysis['tutorial']=is_array($analysis['tutorial']??null)?$analysis['tutorial']:[];
+echo json_encode(['ok'=>true,'symbol'=>$symbol,'timeframe'=>$timeframe,'engine'=>'Primonizer Forex AI — Visual Full Chart Tutor','analysis'=>$analysis],JSON_UNESCAPED_SLASHES|JSON_UNESCAPED_UNICODE);
