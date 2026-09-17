@@ -59,9 +59,21 @@ STOP/INVALIDATION: place the logical invalidation beyond the structure/zone that
 
 TARGETS: use only forward visible structure/liquidity. TP1 and TP2 should be distinct when the chart supports them.
 
-VISUAL ANNOTATION: The frontend will put labels directly on the image. Use concise labels, but make tutorial explanations detailed. The visual sequence should be STRUCTURE -> LIQUIDITY -> DISPLACEMENT -> BOS/CHoCH -> VALID OB/FVG -> CURRENT -> ENTRY -> CONFIRMATION -> INVALIDATION -> TP1 -> TP2.
+PROJECTED MARKET PATH — IMPORTANT:
+The user wants the chart to visually explain how price MAY behave after the current rightmost candle, for example: CURRENT -> RETEST -> REJECTION -> CONTINUATION -> TP1 -> TP2. This is a CONDITIONAL SCENARIO, never a guaranteed prediction.
+- Build one PRIMARY conditional path from the current price using only evidence visible in the screenshots.
+- Prefer realistic steps such as CURRENT -> LIQUIDITY SWEEP -> BOS/CHOCH -> RETEST -> ENTRY -> CONFIRMATION -> TP1 -> TP2 when those events are supported by the structure.
+- If the setup is a pullback, explicitly show CURRENT -> RETEST OF ZONE -> REJECTION/CONFIRMATION -> CONTINUATION.
+- If price must first take liquidity, show that liquidity interaction before the entry trigger.
+- If the setup is invalid until a breakout/retest, show BREAKOUT -> RETEST -> CONFIRMATION rather than pretending entry is immediate.
+- Also provide an INVALIDATION BRANCH when there is a clear opposite condition. Example: CURRENT -> RETEST -> IF PRICE CLOSES THROUGH INVALIDATION, SCENARIO CANCELLED.
+- Every projected step must have a short label, a condition/reason, direction and normalized x/y coordinate when the screenshot supports it.
+- Historical facts and projected steps must be visually distinguishable. Projected steps are SCENARIO/POSSIBLE PATH, not confirmed historical events.
+- Never invent a future candle shape. Draw a path between plausible price/zone locations and explain the condition that would make each step valid.
 
-COORDINATES: x/y normalized 0..1 over the original image. x=0 left, x=1 right, y=0 top, y=1 bottom. Zones use x,y,x2,y2. Points use x,y. Put CURRENT near the rightmost price. Do not fabricate coordinates.
+VISUAL ANNOTATION: The frontend will put labels directly on the image. Use concise labels, but make tutorial explanations detailed. The visual sequence should be STRUCTURE -> LIQUIDITY -> DISPLACEMENT -> BOS/CHoCH -> VALID OB/FVG -> CURRENT -> POSSIBLE RETEST -> CONFIRMATION -> ENTRY -> INVALIDATION -> TP1 -> TP2.
+
+COORDINATES: x/y normalized 0..1 over the original image. x=0 left, x=1 right, y=0 top, y=1 bottom. Zones use x,y,x2,y2. Points use x,y. Put CURRENT near the rightmost price. For projected steps, move x progressively to the RIGHT of CURRENT when there is visible chart space. Do not fabricate coordinates; if a future point cannot be located reliably, use null coordinates and explain it in text.
 
 Return ONLY valid JSON, no markdown fences:
 {
@@ -76,6 +88,17 @@ Return ONLY valid JSON, no markdown fences:
   "targets":{"tp1":"forward target region","tp2":"forward target region"},
   "risk_note":"short risk note"
  },
+ "projected_scenario":{
+  "status":"POSSIBLE|WAIT|INVALIDATED|NONE",
+  "title":"short scenario title",
+  "condition":"what must happen for this path to become valid",
+  "steps":[
+   {"label":"CURRENT|LIQUIDITY|SWEEP|BOS|CHOCH|RETEST|REJECTION|ENTRY|CONFIRMATION|TARGET1|TARGET2","direction":"UP|DOWN|WAIT","condition":"why this step may happen","x":0,"y":0},
+   {"label":"...","direction":"UP|DOWN|WAIT","condition":"...","x":0,"y":0}
+  ],
+  "invalidation_branch":{"label":"INVALIDATION","condition":"what cancels the primary scenario","x":0,"y":0},
+  "warning":"conditional scenario, not a guarantee"
+ },
  "charts":[
   {
    "index":1,"timeframe":"H4","role":"HIGHER_CONTEXT|MIDDLE_CONTEXT|SETUP|ENTRY_TRIGGER","direction":"BULLISH|BEARISH|NEUTRAL","next_move":"UP|DOWN|WAIT","confidence":0,
@@ -84,8 +107,8 @@ Return ONLY valid JSON, no markdown fences:
    "entry":{"state":"NOW|WAIT_CONFIRMATION|PULLBACK|BREAKOUT_RETEST|MISSED|NONE","zone":"visible zone","confirmation":"future trigger","invalidation":"condition","target":"forward target"},
    "concepts":[{"name":"BOS","what":"what the concept means here","why":"why it matters here"}],
    "annotations":[{"type":"HH|HL|LH|LL|BOS|CHoCH|LIQUIDITY|SWEEP|OB_BULL|OB_BEAR|FVG|SUPPORT|RESISTANCE|PREMIUM|DISCOUNT|CURRENT|ENTRY|CONFIRMATION|INVALIDATION|TARGET1|TARGET2|DISPLACEMENT","label":"short","note":"VISIBLE|CANDIDATE|SCENARIO|INVALIDATED|MISSED","x":0,"y":0,"x2":null,"y2":null}],
-   "path":[{"direction":"UP|DOWN","x":0,"y":0,"label":"CURRENT|ENTRY|CONFIRMATION|TARGET1|TARGET2|INVALIDATION"}],
-   "tutorial":[{"title":"Structure","text":"explain what is visible and why it matters"},{"title":"Liquidity","text":"explain what liquidity is here and why"},{"title":"Displacement","text":"explain the move and its evidence"},{"title":"Order block","text":"explain why this OB is valid or why none qualifies"},{"title":"Current price","text":"explain exactly what the rightmost price is doing now"},{"title":"Entry","text":"explain where and what must happen"},{"title":"Invalidation","text":"explain what proves the setup wrong"},{"title":"Targets","text":"explain why TP1/TP2 are forward targets"}]
+   "path":[{"direction":"UP|DOWN","x":0,"y":0,"label":"CURRENT|ENTRY|CONFIRMATION|TARGET1|TARGET2|INVALIDATION|RETEST|REJECTION|SWEEP|BOS|CHOCH"}],
+   "tutorial":[{"title":"Structure","text":"explain what is visible and why it matters"},{"title":"Liquidity","text":"explain what liquidity is here and why"},{"title":"Displacement","text":"explain the move and its evidence"},{"title":"Order block","text":"explain why this OB is valid or why none qualifies"},{"title":"Current price","text":"explain exactly what the rightmost price is doing now"},{"title":"Projected path","text":"explain the conditional retest/rejection/continuation scenario and what must happen"},{"title":"Entry","text":"explain where and what must happen"},{"title":"Invalidation","text":"explain what proves the setup wrong"},{"title":"Targets","text":"explain why TP1/TP2 are forward targets"}]
   }
  ],
  "confluence":["cross-timeframe fact","cross-timeframe fact"],
@@ -97,7 +120,9 @@ PROMPT;
 $content=[['type'=>'input_text','text'=>$prompt],...$payloadParts];
 $payload=['model'=>'gpt-5.6-luna','input'=>[['role'=>'user','content'=>$content]]];
 $ch=curl_init('https://api.openai.com/v1/responses');curl_setopt_array($ch,[CURLOPT_POST=>true,CURLOPT_RETURNTRANSFER=>true,CURLOPT_HTTPHEADER=>['Content-Type: application/json','Authorization: Bearer '.$apiKey],CURLOPT_POSTFIELDS=>json_encode($payload),CURLOPT_TIMEOUT=>180]);$response=curl_exec($ch);$err=curl_error($ch);$status=(int)curl_getinfo($ch,CURLINFO_HTTP_CODE);curl_close($ch);
-if($response===false||$err)fail_json('AI connection failed. Please try again.',502);$data=json_decode($response,true);if(!is_array($data))fail_json('AI returned invalid data.',502);if($status>=400)fail_json($data['error']['message']??'AI provider rejected the request.',502);
+if($response===false||$err)fail_json('AI connection failed. Please try again.',502);
+$data=json_decode($response,true);if(!is_array($data))fail_json('AI returned invalid data.',502);
+if($status>=400){$msg=$data['error']['message']??'AI provider rejected the request.';if($status===429||stripos($msg,'rate limit')!==false||stripos($msg,'tokens per min')!==false)fail_json('AI rate limit reached. The OpenAI organization has reached its current token-per-minute limit. Please wait for the limit window to reset or increase the organization rate limit; your screenshots were not analyzed.',429);fail_json($msg,502);}
 $text=$data['output_text']??'';if(!$text&&isset($data['output']))foreach($data['output'] as $item)foreach(($item['content']??[]) as $part)if(isset($part['text']))$text.=$part['text'];if(!$text)fail_json('AI returned no analysis.',502);$text=trim($text);if(str_starts_with($text,'```'))$text=preg_replace('/^```(?:json)?\s*|\s*```$/','',$text);$analysis=json_decode($text,true);if(!is_array($analysis))fail_json('AI returned unreadable analysis. Try clearer screenshots.',502);
-$analysis['overall']=$analysis['overall']??[];$analysis['charts']=is_array($analysis['charts']??null)?$analysis['charts']:[];$analysis['confluence']=is_array($analysis['confluence']??null)?$analysis['confluence']:[];$analysis['final_diagram']=$analysis['final_diagram']??[];
+$analysis['overall']=$analysis['overall']??[];$analysis['charts']=is_array($analysis['charts']??null)?$analysis['charts']:[];$analysis['confluence']=is_array($analysis['confluence']??null)?$analysis['confluence']:[];$analysis['final_diagram']=$analysis['final_diagram']??[];$analysis['projected_scenario']=is_array($analysis['projected_scenario']??null)?$analysis['projected_scenario']:[];
 echo json_encode(['ok'=>true,'symbol'=>$symbol,'count'=>$count,'meta'=>$meta,'engine'=>'Primonizer Forex AI — Deep Multi-Timeframe Visual Reasoning Engine','analysis'=>$analysis],JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES);
